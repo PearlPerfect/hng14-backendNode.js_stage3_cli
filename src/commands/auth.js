@@ -1,15 +1,15 @@
 const crypto  = require('crypto');
 const http    = require('http');
-const open    = require('open');
-const ora     = require('ora');
 const chalk   = require('chalk');
-const { BASE_URL, request } = require('../utils/api');
+const ora     = require('ora');
+const open    = require('open');
 const tokens  = require('../utils/tokens');
+const { request, BASE_URL } = require('../utils/api');
 
-// PKCE helpers
 function base64url(buf) {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
+
 function generatePKCE() {
   const verifier  = base64url(crypto.randomBytes(32));
   const challenge = base64url(crypto.createHash('sha256').update(verifier).digest());
@@ -29,7 +29,6 @@ async function login() {
 
   const spinner = ora('Opening GitHub login in your browser...').start();
 
-  // Start temporary local server to catch the callback
   await new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -58,12 +57,18 @@ async function login() {
       open(loginUrl);
     });
 
-    setTimeout(() => { server.close(); reject(new Error('Login timed out after 2 minutes')); }, 120000);
+    setTimeout(() => {
+      server.close();
+      reject(new Error('Login timed out after 2 minutes'));
+    }, 120000);
   });
 }
 
 async function logout() {
-  if (!tokens.isLoggedIn()) { console.log(chalk.yellow('Not logged in.')); return; }
+  if (!tokens.isLoggedIn()) {
+    console.log(chalk.yellow('Not logged in.'));
+    return;
+  }
   const spinner = ora('Logging out...').start();
   try {
     const { refreshToken } = tokens.getTokens();
@@ -72,22 +77,32 @@ async function logout() {
     spinner.succeed('Logged out successfully.');
   } catch {
     tokens.clearTokens();
-    spinner.succeed('Logged out.');
+    spinner.succeed('Logged out locally.');
   }
 }
 
 async function whoami() {
-  if (!tokens.isLoggedIn()) { console.log(chalk.yellow('Not logged in. Run: insighta login')); return; }
+  if (!tokens.isLoggedIn()) {
+    console.log(chalk.yellow('Not logged in. Run: insighta login'));
+    return;
+  }
   const spinner = ora('Fetching account info...').start();
   try {
-    const res = await request('GET', '/auth/me');
+    const { status, body } = await request('GET', '/auth/me');
     spinner.stop();
-    const { username, email, role, last_login_at } = res.data;
-    console.log(chalk.cyan(`Username:   `) + username);
-    console.log(chalk.cyan(`Email:      `) + email);
-    console.log(chalk.cyan(`Role:       `) + role);
-    console.log(chalk.cyan(`Last login: `) + last_login_at);
-  } catch (err) { spinner.fail(err.message); }
+    if (status !== 200 || body.status === 'error') {
+      console.log(chalk.red(`✖ ${body.message || 'Failed to fetch user'}`));
+      return;
+    }
+    const { username, email, role, last_login_at, avatar_url } = body.data;
+    console.log(chalk.cyan('Username:   ') + username);
+    console.log(chalk.cyan('Email:      ') + (email || '—'));
+    console.log(chalk.cyan('Role:       ') + role);
+    console.log(chalk.cyan('Last login: ') + (last_login_at || 'first time'));
+    console.log(chalk.cyan('Avatar:     ') + (avatar_url || '—'));
+  } catch (err) {
+    spinner.fail(err.message);
+  }
 }
 
 module.exports = { login, logout, whoami };
